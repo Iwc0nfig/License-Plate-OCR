@@ -4,14 +4,25 @@ from ultralytics import YOLO
 from sys import exit
 from paddleocr import PaddleOCR
 import tempfile
+import base64
+from pydantic import BaseModel
 import os
+
 
 from fastapi import FastAPI, File, UploadFile , HTTPException
 from fastapi.responses import JSONResponse
 
+
+
 model_path = "plate_model.pt"
 SCORE_LIMIT = 0.84
 AREA_LIMIT = 0.5
+
+
+
+class ImageRequest(BaseModel):
+    image: str
+
 
 try:
     model = YOLO(model_path)
@@ -94,15 +105,24 @@ def detect_license_plate(image_path: str) -> str:
 app = FastAPI()
 
 @app.post("/api/license-plate")
-async def api_license_plate(file:UploadFile=File(...)):
-    # Basic content-type validation
-    if not file.content_type or not file.content_type.startswith("image/"):
-        raise HTTPException(status_code=415, detail="Unsupported media type; expected image/*")
+async def api_license_plate_base64(request: ImageRequest):
     
-    data = await file.read()
-    image = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+    try:
+        # Strip data URI prefix if present
+        image_data = request.image
+        if ',' in image_data and image_data.startswith('data:image'):
+            image_data = image_data.split(',', 1)[1]
+        
+        img_bytes = base64.b64decode(image_data, validate=True)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid base64 image data")
+    
+
+    
+    image = cv2.imdecode(np.frombuffer(img_bytes, np.uint8), cv2.IMREAD_COLOR)
     if image is None:
-        raise HTTPException(status_code=400, detail="Invalid image file")
+        raise HTTPException(status_code=400, detail="Decoded data is not a valid image")
+
     
 
     with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
@@ -113,11 +133,14 @@ async def api_license_plate(file:UploadFile=File(...)):
         if not ok:
             raise HTTPException(status_code=500, detail="Failed to write image to temporary file")
         license_plate , scores = detect_license_plate(temp_path)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Failed to detected the license plate")
     finally:
         try:
             os.remove(temp_path)
         except OSError:
             raise f"Failed to delete temporary file with path: {temp_path}"
+            
         
     if not license_plate :
         if  SCORE_LIMIT>scores:
@@ -127,3 +150,11 @@ async def api_license_plate(file:UploadFile=File(...)):
             
     return JSONResponse(content={"license_plate": license_plate}, status_code=200)
 
+
+
+"""
+Command to run : uvicorn plates_api:app --host 0.0.0.0 --port 8001 
+
+-- host : add your server ip address 
+-- port : add your desired port
+"""
