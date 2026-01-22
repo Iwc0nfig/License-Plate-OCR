@@ -1,73 +1,144 @@
-# License Plate OCR API
-
-### Overview
-
-This project provides a FastAPI HTTP endpoint that accepts an image upload, detects a single license plate using a YOLO model, and performs OCR on the cropped plate region using PaddleOCR to return the recognized plate text as JSON.
-The detector loads a model file named plate_model.pt at startup, and the OCR engine is initialized with English language and angle classification enabled, while document orientation classification is disabled.
-The service performs basic content-type validation, safe image decoding, temporary-file handling, and structured error responses for common failure cases.
-
-### Features
-
-- Single-image POST endpoint at /api/license-plate that returns a JSON object with either a license_plate string or a message describing the outcome.
-- YOLO-based license plate detection with highest-confidence box selection, followed by OpenCV preprocessing and PaddleOCR recognition.
-- Confidence and geometric filtering of OCR segments using SCORE_LIMIT=0.84 and AREA_LIMIT=0.5 to assemble the final plate string in reading order.
 
 
-### API
+## **License Plate Recognition API**
 
-- Endpoint: POST /api/license-plate.
-- Request: multipart/form-data with field name file containing an image; content-type must start with image/ and the payload must decode to a valid image.
-- Success responses (HTTP 200):
-    - {"license_plate": "<TEXT>"} when a plate is detected and recognized.
-    - {"message": "No license plate detected"} when no plate is found or assembled.
-    - {"message": "Model not sure . Provide with a better image (closer more clear)"} when OCR confidence is below SCORE_LIMIT for the best candidate.
-- Error responses:
-    - 415 Unsupported Media Type if content-type is missing or not image/*.
-    - 400 Bad Request if the uploaded bytes cannot be decoded into an image.
-    - 500 Internal Server Error if the server fails to persist the temporary image prior to processing.
+A FastAPI-based application that detects and recognizes license plates from images using YOLO (for object detection) and PaddleOCR (for text recognition). The service is containerized for easy deployment and optimized for CPU usage.
 
+## **📋 Prerequisites & Requirements**
 
-### Installation
+Before running the application, ensure you have the following:
 
-- Dependencies (from imports): fastapi, ultralytics, paddleocr, opencv-python (or opencv-python-headless), and numpy.
-- Example installation:
-    - pip install fastapi ultralytics paddleocr opencv-python numpy.
-- Ensure the model file plate_model.pt is present in the working directory; the server will raise a FileNotFoundError at startup if it cannot be loaded.
+* **Operating System:** Linux (Recommended) or Windows.
 
+* **Model File:** The custom YOLO model plate_model.pt **must** be present in the root directory. It is not included in standard libraries.
 
-### Run
+* **Internet Access:** Required on the first run to download default PaddleOCR models (\~20MB).
 
-- App object: app is defined in plates_api.py, suitable for any ASGI server.
-- Example command with Uvicorn: uvicorn plates_api:app --host 0.0.0.0 --port 8000.
-- Once running, send a multipart/form-data POST request with the image file to the /api/license-plate route on the chosen host and port.
+---
 
+**🚀 Installation & Usage**
 
-### Request example
+You can run the API using **Docker** (recommended) or a **Local Environment**.
 
-- curl -X POST -F "file=@path/to/image.jpg" http://HOST:PORT/api/license-plate.
-- Typical success: {"license_plate": "ABC123"}.
-- Alternative success messages: {"message": "No license plate detected"} or {"message": "Model not sure . Provide with a better image (closer more clear)"} depending on detection/OCR outcome.
+### **Option A: Docker (Recommended)**
 
+The Docker setup includes CPU-optimized versions of PyTorch and PaddlePaddle to keep image size manageable.
 
-### Configuration
+1. **Build and Run**:
+```bash
+docker-compose up \--build
+```
 
-- Model path: model_path = "plate_model.pt" controls which YOLO checkpoint is loaded at startup.
-- OCR initialization: PaddleOCR(use_angle_cls=True, lang="en", use_doc_orientation_classify=False) configures English language and angle classification.
-- Filtering thresholds: SCORE_LIMIT=0.84 (minimum OCR confidence per fragment) and AREA_LIMIT=0.5 (minimum fragment height as a fraction of cropped plate height) determine which OCR fragments are kept.
+   This will start the service on port 8001.
 
+### **Option B: Local Environment**
 
-### Processing pipeline
+If running without Docker, follow these steps to set up the environment manually.
 
-- The API reads the uploaded bytes, validates the content-type, decodes the image with OpenCV, and persists it to a temporary file before inference.
-- The detector runs the YOLO model, selects the highest-confidence bounding box, and crops the plate region from the original image.
-- The crop is preprocessed via grayscale conversion, bilateral filtering, and conversion back to BGR before running PaddleOCR.
-- OCR results are filtered by confidence and area ratio, sorted left-to-right by x-coordinate, and concatenated into the final license plate string.
+1. **Install System Dependencies** (Linux/Ubuntu): OpenCV requires specific GL libraries on headless Linux servers.
 
+```bash
+sudo apt-get update && sudo apt-get install ffmpeg libsm6 libxext6 \-y
+```
 
-### Response semantics
+2. **Set up Python Environment**: It is recommended to use Conda with Python 3.10.
 
-- Even when no plate is detected or the model is unsure, the API returns HTTP 200 with a message field to signal the outcome instead of using non-2xx codes for these cases.
-- Validation and system-level failures return appropriate error codes like 415, 400, or 500 to indicate client-side or server-side errors.
+```bash
+conda create \-n plates-env python=3.10 \-y
+conda activate plates-env
+```
 
+3. **Install Python Packages**:
+   First, ensure paddlepaddle is installed (required by PaddleOCR).
+```bash
+pip install paddlepaddle
+```
 
+   Then install the remaining dependencies:
+```bash
+pip install \-r requirements.txt
+```
 
+4. **Start the Server**:
+```bash
+uvicorn plates\_api:app \--host 0.0.0.0 \--port 8001
+```
+
+---
+
+**🔌 API Documentation**
+
+**Base URL:** http://<SERVER_IP>:8001
+
+### **Detect License Plate**
+
+* **Endpoint:** POST /api/license-plate
+
+* **Content-Type:** application/json
+
+* **Body:** A JSON object containing the Base64 encoded image string.
+
+#### **Request Example**
+
+```json
+{
+"image": "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQ..."
+}
+```
+
+Note: The API handles raw Base64 strings or those with the data:image prefix.
+
+#### **Responses**
+
+1. **Success (Plate Detected)**
+```json
+{
+"license\_plate": "ABC1234"
+}
+```
+
+2. **No Plate Detected**
+```json
+{
+"message": "No license plate detected"
+}
+```
+
+3. **Low Confidence (Blurry/Far Image)**
+```json
+{
+"message": "Model not sure . Provide with a better image (closer more clear)"
+}
+```
+
+---
+
+**📂 Project Structure**
+
+Ensure your deployment directory looks like this:
+
+```plaintext
+.
+├── plates\_api.py        \# Main application code \[cite: 15\]
+├── requirements.txt     \# Python dependencies \[cite: 17\]
+├── plate\_model.pt       \# Custom YOLO model (CRITICAL)
+├── Dockerfile           \# Container definition
+├── docker-compose.yml   \# Orchestration config
+└── .dockerignore        \# Build exclusion rules
+```
+
+---
+
+**🛠️ Troubleshooting**
+
+* **ModuleNotFoundError**: Ensure paddlepaddle is installed (pip install paddlepaddle).
+
+* **FileNotFoundError**: Verify that plate_model.pt is located in the root directory where the command is run.
+
+* **ImportError: libGL.so.1**: Missing system libraries. Run the apt-get install command listed in the **Installation** section.
+
+* **Server Errors (500)**: Usually indicates a failure to process the temporary file or a model runtime error.
+
+---
+
+**Would you like me to create a shell script to automate the local installation steps for you?**
